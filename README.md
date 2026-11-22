@@ -15,7 +15,7 @@ cargo test
 
 Save your Polaris program to a file (for example, `sample.pol`) and run it with `cargo run -- <file>`.
 
-### Interactive https://www.google.com/search?q=Input
+### Interactive 
 
 ```bash
 cargo run -- sample.pol
@@ -74,7 +74,7 @@ cargo build --release
 
 ## 3. I/O & Indexing
 
-### Reading https://www.google.com/search?q=Input (`input`)
+### Reading 
 
 - Inline initialization:
   - `N: int = input()`
@@ -85,7 +85,7 @@ cargo build --release
   - `N, M: int` followed by `input(N, M)`
   - `A: int[N]` followed by `input(A)`
 
-### Printing https://www.google.com/search?q=Output (`print`)
+### Printing 
 
 - Print one or more values separated by spaces:
   - `print(N)`
