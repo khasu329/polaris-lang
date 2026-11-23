@@ -1,8 +1,11 @@
-use crate::token::Token;
+use crate::diagnostic::{Diagnostic, Span};
+use crate::token::{SpannedToken, Token};
 
 pub struct Lexer {
     chars: Vec<char>,
     pos: usize,
+    line: usize,
+    col: usize,
 }
 
 impl Lexer {
@@ -10,7 +13,13 @@ impl Lexer {
         Self {
             chars: input.chars().collect(),
             pos: 0,
+            line: 1,
+            col: 1,
         }
+    }
+
+    fn current_span(&self) -> Span {
+        Span::new(self.line, self.col)
     }
 
     fn peek(&self) -> Option<char> {
@@ -24,10 +33,20 @@ impl Lexer {
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.pos += 1;
+        if ch == '\n' {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1;
+        }
         Some(ch)
     }
 
-    fn skip_whitespace_and_comments(&mut self) -> Result<(), String> {
+    fn err(&self, span: Span, msg: impl Into<String>) -> Diagnostic {
+        Diagnostic::new("lex", span, msg)
+    }
+
+    fn skip_whitespace_and_comments(&mut self) -> Result<(), Diagnostic> {
         loop {
             while let Some(c) = self.peek() {
                 if c.is_whitespace() {
@@ -43,6 +62,7 @@ impl Lexer {
                     }
                 }
             } else if self.peek() == Some('/') && self.peek_next() == Some('*') {
+                let start_span = self.current_span();
                 self.advance();
                 self.advance();
                 let mut closed = false;
@@ -54,7 +74,9 @@ impl Lexer {
                     }
                 }
                 if !closed {
-                    return Err("Unterminated block comment".to_string());
+                    return Err(self
+                        .err(start_span, "Unterminated block comment")
+                        .with_hint("Close the block comment with '*/'"));
                 }
             } else {
                 break;
@@ -63,134 +85,144 @@ impl Lexer {
         Ok(())
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
+    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, Diagnostic> {
         let mut tokens = Vec::new();
         loop {
             self.skip_whitespace_and_comments()?;
+            let span = self.current_span();
             let Some(c) = self.peek() else {
-                tokens.push(Token::Eof);
+                tokens.push(SpannedToken {
+                    token: Token::Eof,
+                    span,
+                });
                 break;
             };
 
-            match c {
+            let token = match c {
                 ':' => {
                     self.advance();
-                    tokens.push(Token::Colon);
+                    Token::Colon
                 }
                 ';' => {
                     self.advance();
-                    tokens.push(Token::Semicolon);
+                    Token::Semicolon
                 }
                 ',' => {
                     self.advance();
-                    tokens.push(Token::Comma);
+                    Token::Comma
                 }
                 '(' => {
                     self.advance();
-                    tokens.push(Token::LParen);
+                    Token::LParen
                 }
                 ')' => {
                     self.advance();
-                    tokens.push(Token::RParen);
+                    Token::RParen
                 }
                 '[' => {
                     self.advance();
-                    tokens.push(Token::LBracket);
+                    Token::LBracket
                 }
                 ']' => {
                     self.advance();
-                    tokens.push(Token::RBracket);
+                    Token::RBracket
                 }
                 '{' => {
                     self.advance();
-                    tokens.push(Token::LBrace);
+                    Token::LBrace
                 }
                 '}' => {
                     self.advance();
-                    tokens.push(Token::RBrace);
+                    Token::RBrace
                 }
                 '+' => {
                     self.advance();
-                    tokens.push(Token::Plus);
+                    Token::Plus
                 }
                 '-' => {
                     self.advance();
                     if self.peek() == Some('>') {
                         self.advance();
-                        tokens.push(Token::Arrow);
+                        Token::Arrow
                     } else {
-                        tokens.push(Token::Minus);
+                        Token::Minus
                     }
                 }
                 '*' => {
                     self.advance();
-                    tokens.push(Token::Star);
+                    Token::Star
                 }
                 '/' => {
                     self.advance();
-                    tokens.push(Token::Slash);
+                    Token::Slash
                 }
                 '%' => {
                     self.advance();
-                    tokens.push(Token::Percent);
+                    Token::Percent
                 }
                 '&' => {
                     self.advance();
                     if self.peek() == Some('&') {
                         self.advance();
+                        Token::And
+                    } else {
+                        Token::Amp
                     }
-                    tokens.push(Token::And);
                 }
                 '|' => {
                     self.advance();
                     if self.peek() == Some('|') {
                         self.advance();
+                        Token::Or
+                    } else {
+                        return Err(self
+                            .err(span, "Unexpected single '|'")
+                            .with_hint("Use '||' for logical OR"));
                     }
-                    tokens.push(Token::Or);
                 }
                 '=' => {
                     self.advance();
                     if self.peek() == Some('=') {
                         self.advance();
-                        tokens.push(Token::Eq);
+                        Token::Eq
                     } else {
-                        tokens.push(Token::Assign);
+                        Token::Assign
                     }
                 }
                 '!' => {
                     self.advance();
                     if self.peek() == Some('=') {
                         self.advance();
-                        tokens.push(Token::Neq);
+                        Token::Neq
                     } else {
-                        tokens.push(Token::Not);
+                        Token::Not
                     }
                 }
                 '<' => {
                     self.advance();
                     if self.peek() == Some('=') {
                         self.advance();
-                        tokens.push(Token::Le);
+                        Token::Le
                     } else {
-                        tokens.push(Token::Lt);
+                        Token::Lt
                     }
                 }
                 '>' => {
                     self.advance();
                     if self.peek() == Some('=') {
                         self.advance();
-                        tokens.push(Token::Ge);
+                        Token::Ge
                     } else {
-                        tokens.push(Token::Gt);
+                        Token::Gt
                     }
                 }
                 '.' => {
                     self.advance();
                     if self.peek() == Some('.') {
                         self.advance();
-                        tokens.push(Token::DotDot);
+                        Token::DotDot
                     } else {
-                        tokens.push(Token::Dot);
+                        Token::Dot
                     }
                 }
                 '\'' => {
@@ -203,16 +235,22 @@ impl Lexer {
                             Some('0') => '\0',
                             Some('\\') => '\\',
                             Some('\'') => '\'',
-                            Some(other) => return Err(format!("Unknown escape \\{}", other)),
-                            None => return Err("Unterminated char literal".to_string()),
+                            Some(other) => {
+                                return Err(
+                                    self.err(span, format!("Unknown escape sequence '\\{}'", other))
+                                );
+                            }
+                            None => return Err(self.err(span, "Unterminated character literal")),
                         },
                         Some(ch) => ch,
-                        None => return Err("Unterminated char literal".to_string()),
+                        None => return Err(self.err(span, "Unterminated character literal")),
                     };
                     if self.advance() != Some('\'') {
-                        return Err("Expected closing '\'' for char literal".to_string());
+                        return Err(self
+                            .err(span, "Expected closing '\'' for character literal")
+                            .with_hint("Character literals must contain exactly one character"));
                     }
-                    tokens.push(Token::Char(ch));
+                    Token::Char(ch)
                 }
                 '"' => {
                     self.advance();
@@ -224,16 +262,26 @@ impl Lexer {
                                 Some('n') => s.push('\n'),
                                 Some('t') => s.push('\t'),
                                 Some('r') => s.push('\r'),
+                                Some('0') => s.push('\0'),
                                 Some('\\') => s.push('\\'),
                                 Some('"') => s.push('"'),
-                                Some(other) => return Err(format!("Unknown escape \\{}", other)),
-                                None => return Err("Unterminated string literal".to_string()),
+                                Some(other) => {
+                                    return Err(self.err(
+                                        span,
+                                        format!("Unknown escape sequence '\\{}'", other),
+                                    ));
+                                }
+                                None => return Err(self.err(span, "Unterminated string literal")),
                             },
                             Some(ch) => s.push(ch),
-                            None => return Err("Unterminated string literal".to_string()),
+                            None => {
+                                return Err(self
+                                    .err(span, "Unterminated string literal")
+                                    .with_hint("Add a closing '\"'"));
+                            }
                         }
                     }
-                    tokens.push(Token::Str(s));
+                    Token::Str(s)
                 }
                 c if c.is_ascii_digit() => {
                     let mut num_str = String::new();
@@ -254,12 +302,13 @@ impl Lexer {
                     if is_float {
                         let val: f64 = num_str
                             .parse()
-                            .map_err(|e| format!("Invalid float: {}", e))?;
-                        tokens.push(Token::Float(val));
+                            .map_err(|e| self.err(span, format!("Invalid float '{}': {}", num_str, e)))?;
+                        Token::Float(val)
                     } else {
-                        let val: i64 =
-                            num_str.parse().map_err(|e| format!("Invalid int: {}", e))?;
-                        tokens.push(Token::Int(val));
+                        let val: i64 = num_str
+                            .parse()
+                            .map_err(|e| self.err(span, format!("Invalid int '{}': {}", num_str, e)))?;
+                        Token::Int(val)
                     }
                 }
                 c if c.is_ascii_alphabetic() || c == '_' => {
@@ -273,24 +322,30 @@ impl Lexer {
                         }
                     }
                     match ident.as_str() {
-                        "true" => tokens.push(Token::Bool(true)),
-                        "false" => tokens.push(Token::Bool(false)),
-                        "if" => tokens.push(Token::If),
-                        "else" => tokens.push(Token::Else),
-                        "for" => tokens.push(Token::For),
-                        "in" => tokens.push(Token::In),
-                        "while" => tokens.push(Token::While),
-                        "break" => tokens.push(Token::Break),
-                        "continue" => tokens.push(Token::Continue),
-                        "fn" => tokens.push(Token::Fn),
-                        "class" => tokens.push(Token::Class),
-                        "return" => tokens.push(Token::Return),
-                        "self" => tokens.push(Token::SelfKw),
-                        _ => tokens.push(Token::Ident(ident)),
+                        "true" => Token::Bool(true),
+                        "false" => Token::Bool(false),
+                        "if" => Token::If,
+                        "else" => Token::Else,
+                        "for" => Token::For,
+                        "in" => Token::In,
+                        "while" => Token::While,
+                        "break" => Token::Break,
+                        "continue" => Token::Continue,
+                        "fn" => Token::Fn,
+                        "class" => Token::Class,
+                        "return" => Token::Return,
+                        "self" => Token::SelfKw,
+                        "import" => Token::Import,
+                        "as" => Token::As,
+                        _ => Token::Ident(ident),
                     }
                 }
-                other => return Err(format!("Unexpected character: '{}'", other)),
-            }
+                other => {
+                    return Err(self.err(span, format!("Unexpected character '{}'", other)));
+                }
+            };
+
+            tokens.push(SpannedToken { token, span });
         }
         Ok(tokens)
     }

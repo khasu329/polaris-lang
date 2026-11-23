@@ -1,56 +1,50 @@
-# Polaris (v0.3)
+# Polaris (v0.4)
 
-Polaris is a minimal, statically typed programming language with automatic type inference, lexical block scoping, first-class functions and classes, destructuring assignment, slice views, and multidimensional heterogeneous tables.
+**Polaris** is a clean, statically typed programming language written in Rust with automatic type inference, dynamic arrays, unified multidimensional slice views, mutable references (`&`), C++-style generics (`<T>`), a module system (`import`), classes with automatic RAII (`init` / `drop`), and pinpoint error diagnostics.
 
-## Quick Start
+---
 
-1. Navigate to the `polaris/` Cargo project directory.
-2. Run the test suite:
+## Table of Contents
+
+1. [Quick Start](#1-quick-start)
+2. [Basics: Variables, Type Inference & I/O](#2-basics-variables-type-inference--io)
+3. [Control Flow & Lexical Scoping](#3-control-flow--lexical-scoping)
+4. [Dynamic Arrays & Multidimensional Slice Views](#4-dynamic-arrays--multidimensional-slice-views)
+5. [References (`&T` and `&expr`)](#5-references-t-and-expr)
+6. [Functions & Classes (`fn` / `class`)](#6-functions--classes-fn--class)
+7. [Generics (C++ Template Style `<T>`)](#7-generics-c-template-style-t)
+8. [Modules (`import`)](#8-modules-import)
+9. [Error Diagnostics](#9-error-diagnostics)
+
+---
+
+## 1. Quick Start
+
+Move into the `polaris/` directory and run the test suite:
 
 ```bash
+cd polaris
 cargo test
 ```
 
-## How to Use
-
-Save your Polaris program to a file (for example, `sample.pol`) and run it with `cargo run -- <file>`.
-
-### Interactive
+Run a Polaris source file (relative `import` paths are resolved from the script's directory):
 
 ```bash
+# Interactive mode
 cargo run -- sample.pol
-```
 
-Polaris reads tokens on demand for your `input()` calls and prints results via `print()`.
-
-### Pipe or File Redirection
-
-```bash
+# Pipe or redirect input
 printf "5 5 3 1 4 2\n" | cargo run -- sample.pol
 cargo run -- sample.pol < input.txt
-```
 
-### Build a Standalone Binary
-
-```bash
+# Build standalone release binary
 cargo build --release
 ./target/release/polaris sample.pol < input.txt
 ```
 
 ---
 
-## 1. v0.3 Highlights
-
-- **Removed v0.1 legacy syntax**: Deprecated `while(OR(In))` / `while(AND(In))` extraction loops, guarded rewrite rules (`[a, b](cond) = [...]`), `(Input)` / `(Output)` modifiers, and `[...N]` ellipsis ranges have been completely removed.
-- **Pure `while` loops**: Standard `while (condition) { ... }` loops with `break`, `continue`, and `return`.
-- **Lexical block scoping**: Every block (`fn`, `if` / `else`, `for`, `while`) owns its own lexical scope with access to enclosing variables and local shadowing.
-- **Type inference**: Undeclared assignments (`x = expr`) automatically declare a new variable in the current scope with its type inferred from `expr`. Function return types and `for` loop indices are also inferred when omitted.
-- **Functions (`fn`)**: Typed parameters, optional return type (`-> Type`), and `return` statements.
-- **Classes (`class`)**: Fields (with optional types and default initializers), methods taking `self`, `ClassName(...)` instantiation, automatic `init` constructor, and automatic `drop` destructor on scope exit.
-
----
-
-## 2. Type System & Type Inference
+## 2. Basics: Variables, Type Inference & I/O
 
 ### Primitive Types
 
@@ -59,188 +53,299 @@ cargo build --release
 | `int` | 64-bit signed integer | `0` |
 | `uint` | 64-bit unsigned integer | `0` |
 | `float` | 64-bit floating-point number | `0.0` |
-| `char` | Single Unicode scalar character | `'\0'` |
+| `char` | Single Unicode character | `'\0'` |
 | `string` | UTF-8 string | `""` |
-| `bool` | Boolean | `false` |
-| `void` | Unit/empty return type | — |
+| `bool` | Boolean (`true` / `false`) | `false` |
+| `void` | Empty return type | — |
 
-### Declarations, Inference & Shadowing
+### Declarations & Type Inference
 
-- Explicit declaration: `N: int = 0`
-- Multi-declaration: `N, M: int`
-- Type-inferred declaration (when `x` is not declared in any enclosing scope): `x = 42`, `name = "polaris"`
-- Reassignment (when `x` already exists in the current or an outer scope): `x = x + 1`
-- Explicit shadowing inside a block: `x: string = "local"`
-- 1D fixed-length array: `A: int[N]`
-- 1D variable-length array: `A: int[]`
-- Heterogeneous 2D table: `Cd: [int, int][N]`
+- **Explicit type**: `count: int = 0` or `a, b: int`
+- **Automatic inference**: assigning to an undeclared name automatically declares it in the current scope with its inferred type:
+  ```text
+  x = 42          // inferred as int
+  pi = 3.14       // inferred as float
+  name = "polaris" // inferred as string
+  ```
+- **Reassignment**: assigning to an already-declared variable updates it (`x = x + 1`), and type mismatches are caught statically.
+- **Shadowing**: adding an explicit `: Type` inside an inner block declares a new local variable without modifying the outer variable.
 
----
+### Input & Output
 
-## 3. I/O & Indexing
+```text
+N: int = input()        // declare and read one token
+input(M: int)           // declare inside input()
+A: int[N] = input()     // read N elements into array A
 
-### Reading
+a, b: int
+input(a, b)             // read into existing variables
 
-- Inline initialization:
-  - `N: int = input()`
-  - `A: int[N] = input()`
-- Declaration inside `input`:
-  - `input(N: int)`
-- Reading into existing variables or arrays:
-  - `N, M: int` followed by `input(N, M)`
-  - `A: int[N]` followed by `input(A)`
-
-### Printing & Built-ins
-
-- Print one or more values separated by spaces:
-  - `print(N)`
-  - `print(N, M)`
-  - `print(A)`
-  - `print(S[0], S[1..N])`
-  - `print(Cd[1][0..N])`
-- Length helper: `len(A)` or `len(S)` returns `int`.
-
-### Indexing & Slice Views
-
-- **Element access**: `A[i]`, `S[i]`, `Cd[row][i]`
-- **Half-open slice views**: `A[0..N]`, `S[1..N]`, `Cd[row][0..N]`
-- **Slice fill assignment**: `Cd[0][0..N] = 0`
+print(N, M, A)          // print space-separated values followed by a newline
+```
 
 ---
 
-## 4. Control Flow & Scoping
+## 3. Control Flow & Lexical Scoping
 
-### `for` Loops (Half-Open Interval)
+Every block (`if`, `else`, `for`, `while`, `fn`) has its own lexical scope: inner blocks can read and update outer variables, while variables declared inside a block cannot leak outside.
 
-`[start..end]` iterates over `start <= i < end`:
+### `if / else`
+
+```text
+if x > 10 {
+  print("large")
+} else if x > 0 {
+  print("positive")
+} else {
+  print("non-positive")
+}
+```
+
+### `for` Loop (Half-Open Range `[start..end]`)
+
+Iterates over `start <= i < end` (the loop variable type defaults to `int` when omitted):
 
 ```text
 sum = 0
-for i in [0..N] {
-  if i == 2 {
-    continue
-  }
-  if i == M {
-    break
-  }
+for i in [0..5] {
+  if i == 2 { continue }
   sum = sum + i
 }
+print(sum) // 0 + 1 + 3 + 4 = 8
 ```
 
-### `while` Loops
+### `while` Loop
 
 ```text
 i = 0
-while (i < N) {
-  i = i + 1
-  if i % 2 == 0 {
-    continue
-  }
+while (i < 5) {
   print(i)
+  i = i + 1
 }
-```
-
-### `if / else` & Block Scope
-
-```text
-x = 10
-if x > 5 {
-  x = x + 1        // updates outer x
-  temp = "scoped"  // inferred local variable inside if-block
-  print(x, temp)
-}
-// temp is out of scope here
 ```
 
 ---
 
-## 5. Functions & Classes
+## 4. Dynamic Arrays & Multidimensional Slice Views
 
-### Functions (`fn`)
+### Dynamic Arrays & Methods
 
 ```text
-fn clamp_add(a: int, b: int, limit: int) -> int {
-  total = a + b
-  if total > limit {
-    return limit
-  }
-  return total
+nums = [10, 20, 30]   // inferred as int[]
+nums.push(40)         // [10, 20, 30, 40]
+last = nums.pop()     // returns 40; nums is [10, 20, 30]
+print(nums.len())     // 3 (len(nums) also works)
+nums.clear()          // []
+
+// Empty array literals require a type annotation
+tags: string[] = []
+tags.push("v0.4")
+```
+
+> Assigning an array variable (`b = a`) or passing an array by value (`fn f(a: int[])`) creates an independent copy. To modify the caller's array inside a function, pass a reference (`a: &int[]`) with `&a`.
+
+### Multidimensional Arrays & Heterogeneous Tables
+
+```text
+// Fixed 2D matrix: 2 rows of 3 ints
+grid: int[2][3]
+grid[0][0..3] = 7     // slice fill assignment on row 0
+
+// Dynamic 2D array
+mat: int[][] = []
+mat.push([1, 2, 3])
+mat[0].push(4)
+print(mat[0])         // 1 2 3 4
+
+// Heterogeneous 2D row table
+table: [int, string][3]
+```
+
+### Shared Slice Views (`arr[start..end]`) & Multi-Axis Projection (`A[..end, 0, s..]`)
+
+A slice `A[s..e]` creates a **live view** referencing indices `[s, e)` of the underlying array buffer:
+
+```text
+row = [10, 20, 30, 40]
+view = row[1..3]      // view into elements [20, 30]
+view[0] = 200         // updates row[1] directly!
+print(row)            // 10 200 30 40
+print(row[1..4])      // 200 30 40
+```
+
+For multidimensional arrays, **chained brackets** (`A[..end][0][s..]`) evaluate strictly left-to-right (so `[0]` selects along the first axis `x`), whereas **comma-separated multi-axis indexing** (`A[sel_x, sel_y, sel_z]`) selects or slices each axis simultaneously and produces a live cross-axis view:
+
+```text
+// 3D array A[x][y][z]
+A: int[3][2][4]
+
+// Chained syntax (left-to-right): keeps (y, z) with x=0
+yz_view = A[..2][0][1..]
+
+// Multi-axis projection: fixes y=0 while keeping x in 0..2 and z in 1..4 -> (x, z) view!
+xz_view = A[..2, 0, 1..]
+xz_view[0, 1] = 999       // writes directly into A[0, 0, 2]
+A[1..3, 1, 2..4] = 55     // slice-fill assignment across projected axes
+
+// Column slice on a 2D matrix -> live int[] view
+col = mat[0..3, 1]
+col[1] = 777              // updates mat[1, 1]
+```
+
+- Slice views (including cross-axis projections) can be indexed (`view[i]`, `view[i, j]`), re-sliced (`view[0..1]`), printed (`print(view)`), referenced at leaf elements (`&mat[r, c]`), and passed to functions expecting `T[]` or `T[][]`.
+- Destructuring assignment also works for swapping or unpacking:
+  ```text
+  [A[i], A[i + 1]] = [A[i + 1], A[i]]
+  ```
+
+---
+
+## 5. References (`&T` and `&expr`)
+
+Use `&Type` for reference parameters/variables and `&expr` to take a mutable reference to a variable, array element, or object field:
+
+```text
+fn add_ten(n: &int) {
+  n = n + 10          // automatically writes through to the caller's variable
 }
 
-// Return type can also be inferred when `-> Type` is omitted
-fn double(x: int) {
-  return x * 2
+x = 5
+add_ten(&x)
+print(x)              // 15
+
+// Works with array elements and local aliases too
+arr = [1, 2, 3]
+r: &int = &arr[1]
+r = 99
+print(arr)            // 1 99 3
+```
+
+**Safety guarantees**:
+- Taking `&` of a temporary expression (`&(1 + 2)`, `&f()`) is rejected at type-check time.
+- Returning `&T` from a function is disallowed to prevent dangling references.
+
+---
+
+## 6. Functions & Classes (`fn` / `class`)
+
+### Functions
+
+Return types are optional (`-> Type`); when omitted, Polaris infers the return type from `return` statements (or `void` if none).
+
+```text
+fn fib(n: int) -> int {
+  if n <= 1 { return n }
+  return fib(n - 1) + fib(n - 2)
 }
 ```
 
-### Classes (`class`)
+### Classes, Constructors (`init`), and Destructors (`drop`)
 
 ```text
-class A {
-  A: int
-  B: int = 5
-}
-
 class Counter {
-  value: int = 0
+  val: int = 0
 
   fn init(self, start: int) {
-    self.value = start
+    self.val = start
   }
 
   fn inc(self, delta: int) -> int {
-    self.value = self.value + delta
-    return self.value
+    self.val = self.val + delta
+    return self.val
   }
 
   fn drop(self) {
-    print("dropped", self.value)
+    print("Counter dropped at", self.val)
   }
 }
 
-c = Counter(10)
-print(c.inc(5)) // prints 15; c.drop() runs automatically at scope exit
+if true {
+  c = Counter(10)
+  print(c.inc(5))     // 15
+}                     // c.drop() runs automatically when leaving this block
 ```
 
 ---
 
-## 6. Examples
+## 7. Generics (C++ Template Style `<T>`)
 
-### Bubble Sort with Destructuring Assignment
+Generic functions and classes use angle-bracket type parameters `<T, U>` and are instantiated per concrete type (like C++ templates), supporting both **explicit** type arguments and **argument-inferred** calls:
 
 ```text
-N: int = input()
-A: int[N] = input()
-flag = true
+fn swap<T>(a: &T, b: &T) {
+  tmp = a
+  a = b
+  b = tmp
+}
 
-for step in [0..N] {
-  if !flag {
-    break
+class Box<T> {
+  val: T
+
+  fn init(self, v: T) {
+    self.val = v
   }
-  flag = false
-  for i in [0..N - 1] {
-    if A[i] > A[i + 1] {
-      [A[i], A[i + 1]] = [A[i + 1], A[i]]
-      flag = true
-    }
+
+  fn get(self) -> T {
+    return self.val
   }
 }
 
-print(A)
+x = 1
+y = 2
+swap(&x, &y)            // T inferred as int
+swap<int>(&x, &y)       // explicit type argument
+
+b1 = Box<int>(42)       // explicit Box<int>
+b2 = Box("polaris")     // inferred Box<string>
+print(x, y, b1.get(), b2.get())
 ```
 
-### 2D Table & String Views
+---
+
+## 8. Modules (`import`)
+
+Split your code across multiple `.pol` files and access exported functions, classes, and globals via module qualification:
 
 ```text
-input(N: int)
-S: string = input()
-print(S[0], S[1..N])
+// math.pol
+SCALE = 2
 
-C: int[N] = input()
-Cd: [int, int][N]
-Cd[0][0..N] = 0
-for i in [0..N] {
-  Cd[1][i] = C[i] * 2
+fn double(x: int) -> int {
+  return x * SCALE
 }
-print(Cd[1][0..N])
+
+class Vec2 {
+  x: int
+  y: int
+  fn init(self, x: int, y: int) {
+    self.x = x
+    self.y = y
+  }
+}
+```
+
+```text
+// main.pol
+import math                   // loads math.pol as `math`
+import "utils/geo.pol" as geo // loads relative file path with alias `geo`
+
+v = math.Vec2(3, 4)
+print(math.double(v.x), math.SCALE)
+```
+
+- Duplicate module loads are cached and executed once.
+- Circular imports (`a -> b -> a`) are detected and reported clearly.
+
+---
+
+## 9. Error Diagnostics
+
+Lexical, syntax, static type, module, and runtime errors report the file, line/column, offending source line, a `^` pointer, and actionable hints:
+
+```text
+[type error] Type mismatch for Add: int and string
+  --> <main>:2:5
+  |
+2 | b = a + "wrong"
+  |     ^
 ```

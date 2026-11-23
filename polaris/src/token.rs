@@ -1,3 +1,5 @@
+use crate::diagnostic::Span;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Ident(String),
@@ -20,8 +22,9 @@ pub enum Token {
     Star,    // *
     Slash,   // /
     Percent, // %
-    And,     // & / &&
-    Or,      // | / ||
+    Amp,     // &
+    And,     // &&
+    Or,      // ||
     Not,     // !
 
     // Punctuation
@@ -50,6 +53,14 @@ pub enum Token {
     Class,
     Return,
     SelfKw,
+    Import,
+    As,
 
     Eof,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub span: Span,
 }
