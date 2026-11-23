@@ -1,153 +1,11 @@
 use polaris::run_source;
 
-#[test]
-fn test_1_shortest_distance() {
-    let src = r#"
-N: Int(Input)
-C: Int[...N](Input)
-Cd: [Int, Int][...N]
-Cd[0][...N] = 0
-Cd[1][...N] = C[...N]
-
-while([[a1, a2], [c1, c2]] = Cd(continuous)) {
-  [a1, a2](c1 != c2) = [1, 1]
-}
-
-while([[a1, a2], [c1, c2]] = Cd(continuous)) {
-  [a1, a2](a1 != 0 & a2 == 0) = [a1, a1 + 1]
-  [a1, a2](a1 == 0 & a2 != 0) = [a2 + 1, a2]
-}
-
-Cd[0][...N](Output)
-"#;
-    let out = run_source(src, "6 1 1 2 1 1 1").unwrap();
-    assert_eq!(out.trim(), "2 1 1 1 2 3");
-}
-
-#[test]
-fn test_2_run_length_encoding() {
-    let src = r#"
-N: Int(Input)
-S: Char[...N](Input)
-R: [Char, Int][...]
-R[0][...N] = S[...N]
-R[1][...N] = 1
-
-while([[c1, c2], [n1, n2]] = R(continuous)) {
-  [[c1, c2], [n1, n2]](c1 == c2) = [[c1], [n1 + n2]]
-}
-
-R(Output)
-"#;
-    let out = run_source(src, "7 a a a b b c a").unwrap();
-    assert_eq!(out.trim(), "a b c a\n3 2 1 1");
-}
-
-#[test]
-fn test_3_bubble_sort_or_in() {
-    let src = r#"
-N: Int(Input)
-A: Int[...N](Input)
-while(OR(In),[a1,a2]=A(continous)){
-    [a1,a2](a1>a2)=[a2,a1]
-}A(Output)
-"#;
-    let out = run_source(src, "5 5 3 1 4 2").unwrap();
-    assert_eq!(out.trim(), "1 2 3 4 5");
-}
-
-#[test]
-fn test_4_input_modes() {
-    let src_line = r#"
-N: Int(Input)
-L: String[...N](Input(line))
-L(Output)
-"#;
-    let out_line = run_source(
-        src_line,
-        "2
-hello world
-foo bar
-",
-    )
-    .unwrap();
-    assert_eq!(
-        out_line.trim(),
-        "hello world
-foo bar"
-    );
-
-    let src_char = r#"
-N: Int(Input)
-C: Char[...N](Input(char))
-C(Output)
-"#;
-    let out_char = run_source(
-        src_char, "5
-a bcd
-",
-    )
-    .unwrap();
-    assert_eq!(out_char.trim(), "a   b c d");
-
-    let src_all = r#"
-C: Char[...](Input(all))
-C(Output)
-"#;
-    let out_all = run_source(src_all, "hi!").unwrap();
-    assert_eq!(out_all.trim(), "h i !");
-}
-
-#[test]
-fn test_5_new_input_output_syntax() {
-    let src = r#"
-input(N, M: int)
-A: int[...N]
-input(A)
-output(N)
-output(M)
-output(A)
-"#;
-    let out = run_source(src, "3 10 100 200 300").unwrap();
-    assert_eq!(out.trim(), "3\n10\n100 200 300");
-}
-
-#[test]
-fn test_6_separate_decl_and_input() {
-    let src = r#"
-N: int
-input(N)
-X, Y: int
-input(X, Y)
-output(N)
-output(X)
-output(Y)
-"#;
-    let out = run_source(src, "1 2 3").unwrap();
-    assert_eq!(out.trim(), "1\n2\n3");
-}
-
-#[test]
-fn test_7_bubble_sort_new_syntax() {
-    let src = r#"
-input(N: int)
-A: int[...N]
-input(A)
-while(OR(In), [a1, a2] = A(continuous)) {
-    [a1, a2](a1 > a2) = [a2, a1]
-}
-output(A)
-"#;
-    let out = run_source(src, "5 5 3 1 4 2").unwrap();
-    assert_eq!(out.trim(), "1 2 3 4 5");
-}
-
 // ==========================================
-// v0.2 テストスイート
+// v0.2 Core Language Features (Preserved in v0.3)
 // ==========================================
 
 #[test]
-fn test_8_v02_for_and_if_else() {
+fn test_1_for_and_if_else() {
     let src = r#"
 N: int = input()
 even_sum: int = 0
@@ -163,13 +21,12 @@ for i: int in [0..N] {
 
 print(even_sum, odd_sum)
 "#;
-    // 0..6 => even: 0+2+4=6, odd: 1+3+5=9
     let out = run_source(src, "6").unwrap();
     assert_eq!(out.trim(), "6 9");
 }
 
 #[test]
-fn test_9_v02_break_and_continue() {
+fn test_2_break_and_continue() {
     let src = r#"
 N, M: int
 input(N, M)
@@ -187,13 +44,12 @@ for i: int in [0..N] {
 
 print(sum)
 "#;
-    // 0 + 1 + (skip 2) + 3 + 4 + (break at 5) = 8
     let out = run_source(src, "10 5").unwrap();
     assert_eq!(out.trim(), "8");
 }
 
 #[test]
-fn test_10_v02_bubble_sort_destructuring() {
+fn test_3_bubble_sort_destructuring() {
     let src = r#"
 N: int = input()
 A: int[N] = input()
@@ -219,7 +75,7 @@ print(A);
 }
 
 #[test]
-fn test_11_v02_string_and_array_views() {
+fn test_4_string_and_array_views() {
     let src = r#"
 input(N: int)
 S: string = input()
@@ -232,7 +88,7 @@ print(A[1..N])
 }
 
 #[test]
-fn test_12_v02_table_2d_indexing_and_slice() {
+fn test_5_table_2d_indexing_and_slice() {
     let src = r#"
 N: int = input()
 C: int[N] = input()
@@ -246,4 +102,205 @@ print(Cd[1][0..N])
 "#;
     let out = run_source(src, "4 1 2 3 4").unwrap();
     assert_eq!(out.trim(), "0 0 0 0\n2 4 6 8");
+}
+
+// ==========================================
+// v0.3 New Features
+// ==========================================
+
+#[test]
+fn test_6_v03_pure_while_loop() {
+    let src = r#"
+n: int = input()
+acc = 0
+i = 0
+
+while (i < n) {
+    i = i + 1
+    if i == 3 {
+        continue
+    }
+    if i > 5 {
+        break
+    }
+    acc = acc + i
+}
+
+print(acc)
+"#;
+    // 1 + 2 + (skip 3) + 4 + 5 = 12
+    let out = run_source(src, "10").unwrap();
+    assert_eq!(out.trim(), "12");
+}
+
+#[test]
+fn test_7_v03_lexical_block_scoping() {
+    let src = r#"
+x = 10
+y = 100
+
+if true {
+    x = x + 5
+    y: string = "shadowed"
+    z = 42
+    print(x, y, z)
+}
+
+print(x, y)
+"#;
+    let out = run_source(src, "").unwrap();
+    assert_eq!(out.trim(), "15 shadowed 42\n15 100");
+
+    // z declared inside `if` must not be visible outside
+    let err_src = r#"
+if true {
+    z = 42
+}
+print(z)
+"#;
+    assert!(run_source(err_src, "").is_err());
+}
+
+#[test]
+fn test_8_v03_type_inference_and_errors() {
+    let src = r#"
+a = 21
+b = 2.5
+c = "polaris"
+d = true
+sum = 0
+
+for i in [0..5] {
+    sum = sum + i
+}
+
+fn triple(v: int) {
+    return v * 3
+}
+
+print(a, b, c, d, sum, triple(4))
+"#;
+    let out = run_source(src, "").unwrap();
+    assert_eq!(out.trim(), "21 2.5 polaris true 10 12");
+
+    // Reassigning a different type to an inferred variable must fail
+    let mismatch_src = r#"
+x = 10
+x = "oops"
+"#;
+    assert!(run_source(mismatch_src, "").is_err());
+}
+
+#[test]
+fn test_9_v03_functions_and_recursion() {
+    let src = r#"
+fn mutate_param(B: int, C: string) -> int {
+    B = 5
+    print(C)
+    return B
+}
+
+fn fib(n: int) -> int {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+x = 99
+res = mutate_param(x, "hello")
+print(x, res, fib(7))
+"#;
+    let out = run_source(src, "").unwrap();
+    assert_eq!(out.trim(), "hello\n99 5 13");
+
+    // Returning wrong type from a typed function must fail
+    let bad_ret = r#"
+fn A(B: int, C: string) -> int {
+    B = 5
+    return C
+}
+print(A(1, "hi"))
+"#;
+    assert!(run_source(bad_ret, "").is_err());
+}
+
+#[test]
+fn test_10_v03_classes_fields_methods_and_lifecycle() {
+    let src = r#"
+class A {
+    A: int
+    B: int = 5
+}
+
+class Counter {
+    val: int = 0
+
+    fn init(self, start: int) {
+        self.val = start
+        print("init", self.val)
+    }
+
+    fn inc(self, delta: int) -> int {
+        self.val = self.val + delta
+        return self.val
+    }
+
+    fn drop(self) {
+        print("drop", self.val)
+    }
+}
+
+fn make_counter(start: int) -> Counter {
+    c = Counter(start)
+    return c
+}
+
+a = A()
+a.A = 12
+print(a.A, a.B)
+
+if true {
+    scoped = Counter(10)
+    print(scoped.inc(5))
+}
+
+kept = make_counter(100)
+print(kept.inc(1))
+"#;
+    let out = run_source(src, "").unwrap();
+    assert_eq!(
+        out.trim(),
+        "12 5\ninit 10\n15\ndrop 15\ninit 100\n101\ndrop 101"
+    );
+}
+
+#[test]
+fn test_11_v03_rejects_v01_legacy_syntax() {
+    let v01_or_in = r#"
+N: int = input()
+A: int[N] = input()
+while(OR(In), [a1, a2] = A(continuous)) {
+    [a1, a2](a1 > a2) = [a2, a1]
+}
+"#;
+    assert!(run_source(v01_or_in, "3 3 2 1").is_err());
+
+    let v01_guard_rewrite = r#"
+A: int[2]
+[A[0], A[1]](A[0] > A[1]) = [A[1], A[0]]
+"#;
+    assert!(run_source(v01_guard_rewrite, "").is_err());
+
+    let v01_input_mod = r#"
+N: Int(Input)
+N(Output)
+"#;
+    assert!(run_source(v01_input_mod, "5").is_err());
+
+    let v01_ellipsis = r#"
+N: int = input()
+A: int[...N] = input()
+"#;
+    assert!(run_source(v01_ellipsis, "2 1 2").is_err());
 }

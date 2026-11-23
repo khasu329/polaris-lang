@@ -73,8 +73,11 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, String> {
         match self.peek() {
+            Token::Fn => Ok(Stmt::FnDecl(self.parse_fn_decl(false)?)),
+            Token::Class => Ok(Stmt::ClassDecl(self.parse_class_decl()?)),
             Token::If => self.parse_if(),
             Token::For => self.parse_for(),
+            Token::While => self.parse_while(),
             Token::Break => {
                 self.advance();
                 Ok(Stmt::Break)
@@ -83,11 +86,9 @@ impl Parser {
                 self.advance();
                 Ok(Stmt::Continue)
             }
+            Token::Return => self.parse_return(),
             Token::LBracket => self.parse_multi_assign(),
-            Token::Ident(name) if name == "while" => self.parse_while(),
-            Token::Ident(name)
-                if (name == "print" || name == "output") && *self.peek_n(1) == Token::LParen =>
-            {
+            Token::Ident(name) if name == "print" && *self.peek_n(1) == Token::LParen => {
                 self.parse_print()
             }
             Token::Ident(name) if name == "input" && *self.peek_n(1) == Token::LParen => {
@@ -106,9 +107,10 @@ impl Parser {
                 if self.is_var_decl_start() {
                     self.parse_var_decl()
                 } else {
-                    self.parse_ident_stmt()
+                    self.parse_expr_or_assign_stmt()
                 }
             }
+            Token::SelfKw => self.parse_expr_or_assign_stmt(),
             other => Err(format!(
                 "Unexpected token at start of statement: {:?}",
                 other
@@ -116,62 +118,44 @@ impl Parser {
         }
     }
 
-    fn parse_assign_target_item(&mut self) -> Result<AssignTarget, String> {
-        let name = self.expect_ident()?;
-        if *self.peek() != Token::LBracket {
-            return Ok(AssignTarget::Ident(name));
+    fn expr_to_assign_target(&self, expr: Expr) -> Result<AssignTarget, String> {
+        match expr {
+            Expr::Ident(name) => Ok(AssignTarget::Ident(name)),
+            Expr::FieldAccess { target, field } => Ok(AssignTarget::Field {
+                target: *target,
+                field,
+            }),
+            Expr::Index { target, index } => Ok(AssignTarget::Index {
+                target: *target,
+                index: *index,
+            }),
+            Expr::SliceView { target, start, end } => Ok(AssignTarget::Slice {
+                target: *target,
+                start: start.map(|b| *b),
+                end: end.map(|b| *b),
+            }),
+            other => Err(format!("Invalid assignment target: {:?}", other)),
         }
-        self.advance(); // '['
-        let first_expr = self.parse_expr()?;
-        if *self.peek() == Token::DotDot {
-            self.advance(); // '..'
-            let end_expr = self.parse_expr()?;
-            self.expect(Token::RBracket)?;
-            return Ok(AssignTarget::Slice {
-                target: name,
-                row: None,
-                start: Some(first_expr),
-                end: Some(end_expr),
-            });
+    }
+
+    fn parse_expr_or_assign_stmt(&mut self) -> Result<Stmt, String> {
+        let lhs = self.parse_expr()?;
+        if *self.peek() == Token::Assign {
+            self.advance();
+            let value = self.parse_expr()?;
+            let target = self.expr_to_assign_target(lhs)?;
+            Ok(Stmt::Assign { target, value })
+        } else {
+            Ok(Stmt::ExprStmt(lhs))
         }
-        self.expect(Token::RBracket)?;
-        if *self.peek() == Token::LBracket {
-            self.advance(); // '['
-            let second_expr = self.parse_expr()?;
-            if *self.peek() == Token::DotDot {
-                self.advance(); // '..'
-                let end_expr = self.parse_expr()?;
-                self.expect(Token::RBracket)?;
-                let row_idx = match first_expr {
-                    Expr::Int(i) if i >= 0 => i as usize,
-                    _ => return Err("Row index must be a non-negative integer".to_string()),
-                };
-                return Ok(AssignTarget::Slice {
-                    target: name,
-                    row: Some(row_idx),
-                    start: Some(second_expr),
-                    end: Some(end_expr),
-                });
-            }
-            self.expect(Token::RBracket)?;
-            return Ok(AssignTarget::Index {
-                target: name,
-                row: Some(first_expr),
-                index: second_expr,
-            });
-        }
-        Ok(AssignTarget::Index {
-            target: name,
-            row: None,
-            index: first_expr,
-        })
     }
 
     fn parse_multi_assign(&mut self) -> Result<Stmt, String> {
         self.expect(Token::LBracket)?;
         let mut targets = Vec::new();
         while *self.peek() != Token::RBracket && *self.peek() != Token::Eof {
-            targets.push(self.parse_assign_target_item()?);
+            let expr = self.parse_expr()?;
+            targets.push(self.expr_to_assign_target(expr)?);
             if *self.peek() == Token::Comma {
                 self.advance();
             } else {
@@ -229,7 +213,7 @@ impl Parser {
         let var_name = self.expect_ident()?;
         let var_ty = if *self.peek() == Token::Colon {
             self.advance();
-            Some(self.parse_prim_type()?)
+            Some(self.parse_type_ref()?)
         } else {
             None
         };
@@ -251,8 +235,158 @@ impl Parser {
         })
     }
 
+    fn parse_while(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::While)?;
+        let has_paren = *self.peek() == Token::LParen;
+        if has_paren {
+            self.advance();
+        }
+        let cond = self.parse_expr()?;
+        if has_paren {
+            self.expect(Token::RParen)?;
+        }
+        let body = self.parse_block()?;
+        Ok(Stmt::While { cond, body })
+    }
+
+    fn parse_return(&mut self) -> Result<Stmt, String> {
+        self.expect(Token::Return)?;
+        let no_expr = matches!(
+            self.peek(),
+            Token::RBrace
+                | Token::Semicolon
+                | Token::Eof
+                | Token::If
+                | Token::Else
+                | Token::For
+                | Token::While
+                | Token::Break
+                | Token::Continue
+                | Token::Fn
+                | Token::Class
+                | Token::Return
+        ) || (matches!(self.peek(), Token::Ident(_))
+            && matches!(self.peek_n(1), Token::Assign | Token::Colon));
+
+        if no_expr {
+            Ok(Stmt::Return(None))
+        } else {
+            Ok(Stmt::Return(Some(self.parse_expr()?)))
+        }
+    }
+
+    fn parse_fn_decl(&mut self, is_method: bool) -> Result<FnDecl, String> {
+        self.expect(Token::Fn)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::LParen)?;
+        let mut params = Vec::new();
+        while *self.peek() != Token::RParen && *self.peek() != Token::Eof {
+            if is_method && params.is_empty() && *self.peek() == Token::SelfKw {
+                self.advance();
+                let ty = if *self.peek() == Token::Colon {
+                    self.advance();
+                    Some(self.parse_type_spec()?)
+                } else {
+                    None
+                };
+                params.push(Param {
+                    name: "self".to_string(),
+                    ty,
+                });
+            } else {
+                let pname = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let pty = self.parse_type_spec()?;
+                params.push(Param {
+                    name: pname,
+                    ty: Some(pty),
+                });
+            }
+            if *self.peek() == Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(Token::RParen)?;
+
+        let return_type = if *self.peek() == Token::Arrow {
+            self.advance();
+            Some(self.parse_type_spec()?)
+        } else {
+            None
+        };
+
+        let body = self.parse_block()?;
+        Ok(FnDecl {
+            name,
+            params,
+            return_type,
+            body,
+        })
+    }
+
+    fn parse_class_decl(&mut self) -> Result<ClassDecl, String> {
+        self.expect(Token::Class)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::LBrace)?;
+
+        let mut fields = Vec::new();
+        let mut methods = Vec::new();
+
+        self.skip_semicolons();
+        while *self.peek() != Token::RBrace && *self.peek() != Token::Eof {
+            if *self.peek() == Token::Fn {
+                methods.push(self.parse_fn_decl(true)?);
+            } else {
+                let mut field_names = Vec::new();
+                loop {
+                    field_names.push(self.expect_ident()?);
+                    if *self.peek() == Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                let ty = if *self.peek() == Token::Colon {
+                    self.advance();
+                    Some(self.parse_type_spec()?)
+                } else {
+                    None
+                };
+                let default_expr = if *self.peek() == Token::Assign {
+                    self.advance();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                if ty.is_none() && default_expr.is_none() {
+                    return Err(format!(
+                        "Field '{}' in class '{}' requires either ': <type>' or '= <expr>'",
+                        field_names[0], name
+                    ));
+                }
+                for fname in field_names {
+                    fields.push(FieldDecl {
+                        name: fname,
+                        ty: ty.clone(),
+                        default_expr: default_expr.clone(),
+                    });
+                }
+            }
+            self.skip_semicolons();
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(ClassDecl {
+            name,
+            fields,
+            methods,
+        })
+    }
+
     fn parse_print(&mut self) -> Result<Stmt, String> {
-        self.advance(); // "print" or "output"
+        self.advance(); // "print"
         self.expect(Token::LParen)?;
         let mut args = Vec::new();
         while *self.peek() != Token::RParen && *self.peek() != Token::Eof {
@@ -280,33 +414,24 @@ impl Parser {
         false
     }
 
-    fn parse_prim_type(&mut self) -> Result<PrimType, String> {
+    fn parse_type_ref(&mut self) -> Result<TypeRef, String> {
         let name = self.expect_ident()?;
-        match name.to_lowercase().as_str() {
-            "int" => Ok(PrimType::Int),
-            "uint" => Ok(PrimType::Uint),
-            "float" => Ok(PrimType::Float),
-            "char" => Ok(PrimType::Char),
-            "string" => Ok(PrimType::String),
-            "bool" => Ok(PrimType::Bool),
-            _ => Err(format!("Unknown primitive type: {}", name)),
+        match name.as_str() {
+            "int" => Ok(TypeRef::Int),
+            "uint" => Ok(TypeRef::Uint),
+            "float" => Ok(TypeRef::Float),
+            "char" => Ok(TypeRef::Char),
+            "string" => Ok(TypeRef::String),
+            "bool" => Ok(TypeRef::Bool),
+            "void" => Ok(TypeRef::Void),
+            _ => Ok(TypeRef::Custom(name)),
         }
     }
 
-    fn parse_slice_range(&mut self) -> Result<Option<Expr>, String> {
+    fn parse_array_len(&mut self) -> Result<Option<Expr>, String> {
         self.expect(Token::LBracket)?;
-        // Support both A[N] / A[] (v0.2) and A[...N] / A[...] (legacy)
-        if *self.peek() == Token::Ellipsis {
+        if *self.peek() == Token::RBracket {
             self.advance();
-            let len = if *self.peek() == Token::RBracket {
-                None
-            } else {
-                Some(self.parse_expr()?)
-            };
-            self.expect(Token::RBracket)?;
-            Ok(len)
-        } else if *self.peek() == Token::RBracket {
-            self.expect(Token::RBracket)?;
             Ok(None)
         } else {
             let len = self.parse_expr()?;
@@ -320,7 +445,7 @@ impl Parser {
             self.advance();
             let mut row_types = Vec::new();
             loop {
-                row_types.push(self.parse_prim_type()?);
+                row_types.push(self.parse_type_ref()?);
                 if *self.peek() == Token::Comma {
                     self.advance();
                 } else {
@@ -328,12 +453,12 @@ impl Parser {
                 }
             }
             self.expect(Token::RBracket)?;
-            let len = self.parse_slice_range()?;
+            let len = self.parse_array_len()?;
             Ok(TypeSpec::Table { row_types, len })
         } else {
-            let prim = self.parse_prim_type()?;
+            let prim = self.parse_type_ref()?;
             if *self.peek() == Token::LBracket {
-                let len = self.parse_slice_range()?;
+                let len = self.parse_array_len()?;
                 Ok(TypeSpec::Array1D { elem: prim, len })
             } else {
                 Ok(TypeSpec::Scalar(prim))
@@ -360,45 +485,14 @@ impl Parser {
             init = Some(self.parse_expr()?);
         }
 
-        let mut input_mode = None;
-        if *self.peek() == Token::LParen {
-            self.advance();
-            let mod_name = self.expect_ident()?;
-            if mod_name.eq_ignore_ascii_case("input") {
-                let mode = if *self.peek() == Token::LParen {
-                    self.advance();
-                    let m = self.expect_ident()?;
-                    self.expect(Token::RParen)?;
-                    match m.to_lowercase().as_str() {
-                        "token" => InputMode::Token,
-                        "line" => InputMode::Line,
-                        "char" => InputMode::Char,
-                        "all" => InputMode::All,
-                        _ => return Err(format!("Unknown Input mode: {}", m)),
-                    }
-                } else {
-                    InputMode::Token
-                };
-                input_mode = Some(mode);
-            } else {
-                return Err(format!("Unknown declaration modifier: {}", mod_name));
-            }
-            self.expect(Token::RParen)?;
-        }
-
-        Ok(Stmt::VarDecl {
-            names,
-            ty,
-            init,
-            input_mode,
-        })
+        Ok(Stmt::VarDecl { names, ty, init })
     }
 
     fn parse_fn_input(&mut self) -> Result<Stmt, String> {
         self.expect_ident()?; // "input"
         self.expect(Token::LParen)?;
         let mut targets = Vec::new();
-        while *self.peek() != Token::RParen {
+        while *self.peek() != Token::RParen && *self.peek() != Token::Eof {
             if self.is_var_decl_start() {
                 let mut names = Vec::new();
                 loop {
@@ -418,29 +512,9 @@ impl Parser {
                 self.expect(Token::Colon)?;
                 let ty = self.parse_type_spec()?;
                 targets.push(InputTarget::Decl { names, ty });
-            } else if *self.peek() == Token::LBracket {
-                self.advance(); // '['
-                while *self.peek() != Token::RBracket {
-                    let (name, row, len) = self.parse_slice_target()?;
-                    targets.push(InputTarget::Slice {
-                        target: name,
-                        row,
-                        len,
-                    });
-                    if *self.peek() == Token::Comma {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-                self.expect(Token::RBracket)?;
             } else {
-                let (name, row, len) = self.parse_slice_target()?;
-                targets.push(InputTarget::Slice {
-                    target: name,
-                    row,
-                    len,
-                });
+                let expr = self.parse_expr()?;
+                targets.push(InputTarget::Var { target: expr });
             }
 
             if *self.peek() == Token::Comma {
@@ -453,369 +527,19 @@ impl Parser {
         Ok(Stmt::FnInput { targets })
     }
 
-    fn parse_slice_target(&mut self) -> Result<(String, Option<usize>, Option<Expr>), String> {
-        let name = self.expect_ident()?;
-        let mut row = None;
-        let mut len = None;
-        if *self.peek() == Token::LBracket {
-            if *self.peek_n(1) != Token::Ellipsis {
-                self.advance(); // '['
-                match self.advance() {
-                    Token::Int(idx) if idx >= 0 => row = Some(idx as usize),
-                    other => {
-                        return Err(format!("Expected non-negative row index, got {:?}", other));
-                    }
-                }
-                self.expect(Token::RBracket)?;
-                if *self.peek() == Token::LBracket {
-                    len = self.parse_slice_range()?;
-                }
-            } else {
-                len = self.parse_slice_range()?;
-            }
-        }
-        Ok((name, row, len))
-    }
-
-    fn parse_ident_stmt(&mut self) -> Result<Stmt, String> {
-        let name = self.expect_ident()?;
-        if *self.peek() == Token::LParen {
-            self.advance();
-            let mod_name = self.expect_ident()?;
-            if mod_name != "Output" {
-                return Err(format!("Expected Output modifier, got {}", mod_name));
-            }
-            self.expect(Token::RParen)?;
-            return Ok(Stmt::Output {
-                target: name,
-                row: None,
-                len: None,
-            });
-        }
-
-        if *self.peek() == Token::LBracket {
-            self.advance(); // '['
-            if *self.peek() == Token::Ellipsis {
-                self.advance();
-                let len = if *self.peek() == Token::RBracket {
-                    None
-                } else {
-                    Some(self.parse_expr()?)
-                };
-                self.expect(Token::RBracket)?;
-                if *self.peek() == Token::LParen {
-                    self.advance();
-                    self.expect_ident()?;
-                    self.expect(Token::RParen)?;
-                    return Ok(Stmt::Output {
-                        target: name,
-                        row: None,
-                        len,
-                    });
-                }
-                self.expect(Token::Assign)?;
-                let value = self.parse_assign_value()?;
-                return Ok(Stmt::SliceAssign {
-                    target: name,
-                    row: None,
-                    len,
-                    value,
-                });
-            }
-
-            let first_expr = self.parse_expr()?;
-            if *self.peek() == Token::DotDot {
-                self.advance(); // '..'
-                let end_expr = self.parse_expr()?;
-                self.expect(Token::RBracket)?;
-                self.expect(Token::Assign)?;
-                let value = self.parse_expr()?;
-                return Ok(Stmt::Assign {
-                    target: AssignTarget::Slice {
-                        target: name,
-                        row: None,
-                        start: Some(first_expr),
-                        end: Some(end_expr),
-                    },
-                    value,
-                });
-            }
-            self.expect(Token::RBracket)?;
-
-            if *self.peek() == Token::LBracket {
-                self.advance();
-                let row_idx = match first_expr {
-                    Expr::Int(i) if i >= 0 => i as usize,
-                    _ => return Err("Row index must be a non-negative integer".to_string()),
-                };
-
-                if *self.peek() == Token::Ellipsis {
-                    self.advance();
-                    let len = if *self.peek() == Token::RBracket {
-                        None
-                    } else {
-                        Some(self.parse_expr()?)
-                    };
-                    self.expect(Token::RBracket)?;
-                    if *self.peek() == Token::LParen {
-                        self.advance();
-                        self.expect_ident()?;
-                        self.expect(Token::RParen)?;
-                        return Ok(Stmt::Output {
-                            target: name,
-                            row: Some(row_idx),
-                            len,
-                        });
-                    }
-                    self.expect(Token::Assign)?;
-                    let value = self.parse_assign_value()?;
-                    return Ok(Stmt::SliceAssign {
-                        target: name,
-                        row: Some(row_idx),
-                        len,
-                        value,
-                    });
-                }
-
-                let start_expr = self.parse_expr()?;
-                if *self.peek() == Token::DotDot {
-                    self.advance();
-                    let end_expr = self.parse_expr()?;
-                    self.expect(Token::RBracket)?;
-                    self.expect(Token::Assign)?;
-                    let value = self.parse_expr()?;
-                    return Ok(Stmt::Assign {
-                        target: AssignTarget::Slice {
-                            target: name,
-                            row: Some(row_idx),
-                            start: Some(start_expr),
-                            end: Some(end_expr),
-                        },
-                        value,
-                    });
-                }
-                self.expect(Token::RBracket)?;
-                self.expect(Token::Assign)?;
-                let value = self.parse_expr()?;
-                return Ok(Stmt::Assign {
-                    target: AssignTarget::Index {
-                        target: name,
-                        row: Some(Expr::Int(row_idx as i64)),
-                        index: start_expr,
-                    },
-                    value,
-                });
-            }
-
-            self.expect(Token::Assign)?;
-            let value = self.parse_expr()?;
-            return Ok(Stmt::Assign {
-                target: AssignTarget::Index {
-                    target: name,
-                    row: None,
-                    index: first_expr,
-                },
-                value,
-            });
-        }
-
-        self.expect(Token::Assign)?;
-        let value = self.parse_expr()?;
-        Ok(Stmt::Assign {
-            target: AssignTarget::Ident(name),
-            value,
-        })
-    }
-
-    fn parse_assign_value(&mut self) -> Result<AssignValue, String> {
-        if let Token::Ident(_) = self.peek() {
-            if *self.peek_n(1) == Token::LBracket {
-                let (src, s_row, s_len) = self.parse_slice_target()?;
-                return Ok(AssignValue::Slice {
-                    source: src,
-                    row: s_row,
-                    len: s_len,
-                });
-            }
-        }
-        Ok(AssignValue::Scalar(self.parse_expr()?))
-    }
-
-    fn parse_while(&mut self) -> Result<Stmt, String> {
-        let kw = self.expect_ident()?;
-        if kw != "while" {
-            return Err("Expected 'while'".to_string());
-        }
+    fn parse_arg_list(&mut self) -> Result<Vec<Expr>, String> {
         self.expect(Token::LParen)?;
-
-        let cond = match self.peek() {
-            Token::LBracket => WhileCond::Extract(self.parse_extraction()?),
-            Token::Ident(s) if s == "OR" || s == "AND" => {
-                let op = self.expect_ident()?;
-                self.expect(Token::LParen)?;
-                let arg = self.expect_ident()?;
-                if arg != "In" {
-                    return Err(format!("Expected 'In' inside {}(), got '{}'", op, arg));
-                }
-                self.expect(Token::RParen)?;
-                if op == "OR" {
-                    WhileCond::OrIn
-                } else {
-                    WhileCond::AndIn
-                }
-            }
-            _ => WhileCond::BoolExpr(self.parse_expr()?),
-        };
-
-        let mut step = Vec::new();
-        if *self.peek() == Token::Comma {
-            self.advance();
-            if *self.peek() == Token::LBrace {
+        let mut args = Vec::new();
+        while *self.peek() != Token::RParen && *self.peek() != Token::Eof {
+            args.push(self.parse_expr()?);
+            if *self.peek() == Token::Comma {
                 self.advance();
-                while *self.peek() != Token::RBrace {
-                    step.push(self.parse_extraction()?);
-                }
-                self.expect(Token::RBrace)?;
             } else {
-                step.push(self.parse_extraction()?);
+                break;
             }
         }
-
         self.expect(Token::RParen)?;
-        self.expect(Token::LBrace)?;
-
-        let mut body = Vec::new();
-        while *self.peek() != Token::RBrace {
-            body.push(self.parse_rewrite_rule()?);
-        }
-        self.expect(Token::RBrace)?;
-
-        Ok(Stmt::While { cond, step, body })
-    }
-
-    fn parse_pattern_matrix(&mut self) -> Result<Vec<Vec<PatternElem>>, String> {
-        self.expect(Token::LBracket)?;
-        if *self.peek() == Token::LBracket {
-            let mut rows = Vec::new();
-            while *self.peek() == Token::LBracket {
-                rows.push(self.parse_pattern_row()?);
-                if *self.peek() == Token::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            self.expect(Token::RBracket)?;
-            Ok(rows)
-        } else {
-            let row = self.parse_pattern_row_inner()?;
-            self.expect(Token::RBracket)?;
-            Ok(vec![row])
-        }
-    }
-
-    fn parse_pattern_row(&mut self) -> Result<Vec<PatternElem>, String> {
-        self.expect(Token::LBracket)?;
-        let row = self.parse_pattern_row_inner()?;
-        self.expect(Token::RBracket)?;
-        Ok(row)
-    }
-
-    fn parse_pattern_row_inner(&mut self) -> Result<Vec<PatternElem>, String> {
-        let mut elems = Vec::new();
-        while *self.peek() != Token::RBracket {
-            let elem = match self.peek() {
-                Token::Ident(s) => {
-                    let name = s.clone();
-                    self.advance();
-                    PatternElem::Var(name)
-                }
-                _ => PatternElem::Lit(self.parse_expr()?),
-            };
-            elems.push(elem);
-            if *self.peek() == Token::Comma {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        Ok(elems)
-    }
-
-    fn parse_extraction(&mut self) -> Result<Extraction, String> {
-        let patterns = self.parse_pattern_matrix()?;
-        self.expect(Token::Assign)?;
-        let target = self.expect_ident()?;
-        let mode = if *self.peek() == Token::LParen {
-            self.advance();
-            let mode_str = self.expect_ident()?;
-            self.expect(Token::RParen)?;
-            match mode_str.as_str() {
-                "continuous" | "continuos" | "continous" => ExtractMode::Continuous,
-                "any" => ExtractMode::Any,
-                "head" => ExtractMode::Head,
-                "tail" => ExtractMode::Tail,
-                _ => return Err(format!("Unknown extraction mode: {}", mode_str)),
-            }
-        } else {
-            ExtractMode::Single
-        };
-        Ok(Extraction {
-            patterns,
-            target,
-            mode,
-        })
-    }
-
-    fn parse_expr_matrix(&mut self) -> Result<Vec<Vec<Expr>>, String> {
-        self.expect(Token::LBracket)?;
-        if *self.peek() == Token::LBracket {
-            let mut rows = Vec::new();
-            while *self.peek() == Token::LBracket {
-                self.advance(); // '['
-                rows.push(self.parse_expr_list_inner()?);
-                self.expect(Token::RBracket)?;
-                if *self.peek() == Token::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            self.expect(Token::RBracket)?;
-            Ok(rows)
-        } else {
-            let row = self.parse_expr_list_inner()?;
-            self.expect(Token::RBracket)?;
-            Ok(vec![row])
-        }
-    }
-
-    fn parse_expr_list_inner(&mut self) -> Result<Vec<Expr>, String> {
-        let mut exprs = Vec::new();
-        while *self.peek() != Token::RBracket {
-            exprs.push(self.parse_expr()?);
-            if *self.peek() == Token::Comma {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        Ok(exprs)
-    }
-
-    fn parse_rewrite_rule(&mut self) -> Result<RewriteRule, String> {
-        let lhs = self.parse_pattern_matrix()?;
-        let guard = if *self.peek() == Token::LParen {
-            self.advance();
-            let expr = self.parse_expr()?;
-            self.expect(Token::RParen)?;
-            Some(expr)
-        } else {
-            None
-        };
-        self.expect(Token::Assign)?;
-        let rhs = self.parse_expr_matrix()?;
-        Ok(RewriteRule { lhs, guard, rhs })
+        Ok(args)
     }
 
     // Expression parsing (precedence climbing)
@@ -973,6 +697,10 @@ impl Parser {
                 self.advance();
                 Expr::Bool(val)
             }
+            Token::SelfKw => {
+                self.advance();
+                Expr::SelfRef
+            }
             Token::Ident(s)
                 if s == "input"
                     && *self.peek_n(1) == Token::LParen
@@ -982,6 +710,12 @@ impl Parser {
                 self.advance(); // '('
                 self.advance(); // ')'
                 Expr::InputCall
+            }
+            Token::Ident(s) if *self.peek_n(1) == Token::LParen => {
+                let callee = s.clone();
+                self.advance();
+                let args = self.parse_arg_list()?;
+                Expr::Call { callee, args }
             }
             Token::Ident(s) => {
                 let name = s.clone();
@@ -998,33 +732,53 @@ impl Parser {
         };
 
         let mut expr = base;
-        while *self.peek() == Token::LBracket {
-            self.advance(); // '['
-            let start = if *self.peek() == Token::DotDot {
-                None
-            } else {
-                Some(Box::new(self.parse_expr()?))
-            };
-            if *self.peek() == Token::DotDot {
-                self.advance(); // '..'
-                let end = if *self.peek() == Token::RBracket {
+        loop {
+            if *self.peek() == Token::LBracket {
+                self.advance(); // '['
+                let start = if *self.peek() == Token::DotDot {
                     None
                 } else {
                     Some(Box::new(self.parse_expr()?))
                 };
-                self.expect(Token::RBracket)?;
-                expr = Expr::SliceView {
-                    target: Box::new(expr),
-                    start,
-                    end,
-                };
+                if *self.peek() == Token::DotDot {
+                    self.advance(); // '..'
+                    let end = if *self.peek() == Token::RBracket {
+                        None
+                    } else {
+                        Some(Box::new(self.parse_expr()?))
+                    };
+                    self.expect(Token::RBracket)?;
+                    expr = Expr::SliceView {
+                        target: Box::new(expr),
+                        start,
+                        end,
+                    };
+                } else {
+                    self.expect(Token::RBracket)?;
+                    let index = start.ok_or_else(|| "Expected index expression".to_string())?;
+                    expr = Expr::Index {
+                        target: Box::new(expr),
+                        index,
+                    };
+                }
+            } else if *self.peek() == Token::Dot {
+                self.advance(); // '.'
+                let member = self.expect_ident()?;
+                if *self.peek() == Token::LParen {
+                    let args = self.parse_arg_list()?;
+                    expr = Expr::MethodCall {
+                        target: Box::new(expr),
+                        method: member,
+                        args,
+                    };
+                } else {
+                    expr = Expr::FieldAccess {
+                        target: Box::new(expr),
+                        field: member,
+                    };
+                }
             } else {
-                self.expect(Token::RBracket)?;
-                let index = start.ok_or_else(|| "Expected index expression".to_string())?;
-                expr = Expr::Index {
-                    target: Box::new(expr),
-                    index,
-                };
+                break;
             }
         }
         Ok(expr)

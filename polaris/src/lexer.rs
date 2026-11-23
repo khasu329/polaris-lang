@@ -21,17 +21,13 @@ impl Lexer {
         self.chars.get(self.pos + 1).copied()
     }
 
-    fn peek_n(&self, n: usize) -> Option<char> {
-        self.chars.get(self.pos + n).copied()
-    }
-
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.pos += 1;
         Some(ch)
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> Result<(), String> {
         loop {
             while let Some(c) = self.peek() {
                 if c.is_whitespace() {
@@ -46,16 +42,31 @@ impl Lexer {
                         break;
                     }
                 }
+            } else if self.peek() == Some('/') && self.peek_next() == Some('*') {
+                self.advance();
+                self.advance();
+                let mut closed = false;
+                while let Some(c) = self.advance() {
+                    if c == '*' && self.peek() == Some('/') {
+                        self.advance();
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return Err("Unterminated block comment".to_string());
+                }
             } else {
                 break;
             }
         }
+        Ok(())
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
         let mut tokens = Vec::new();
         loop {
-            self.skip_whitespace_and_comments();
+            self.skip_whitespace_and_comments()?;
             let Some(c) = self.peek() else {
                 tokens.push(Token::Eof);
                 break;
@@ -104,7 +115,12 @@ impl Lexer {
                 }
                 '-' => {
                     self.advance();
-                    tokens.push(Token::Minus);
+                    if self.peek() == Some('>') {
+                        self.advance();
+                        tokens.push(Token::Arrow);
+                    } else {
+                        tokens.push(Token::Minus);
+                    }
                 }
                 '*' => {
                     self.advance();
@@ -120,10 +136,16 @@ impl Lexer {
                 }
                 '&' => {
                     self.advance();
+                    if self.peek() == Some('&') {
+                        self.advance();
+                    }
                     tokens.push(Token::And);
                 }
                 '|' => {
                     self.advance();
+                    if self.peek() == Some('|') {
+                        self.advance();
+                    }
                     tokens.push(Token::Or);
                 }
                 '=' => {
@@ -163,17 +185,12 @@ impl Lexer {
                     }
                 }
                 '.' => {
-                    if self.peek_next() == Some('.') && self.peek_n(2) == Some('.') {
-                        self.advance();
-                        self.advance();
-                        self.advance();
-                        tokens.push(Token::Ellipsis);
-                    } else if self.peek_next() == Some('.') {
-                        self.advance();
+                    self.advance();
+                    if self.peek() == Some('.') {
                         self.advance();
                         tokens.push(Token::DotDot);
                     } else {
-                        return Err("Unexpected '.' (expected '...' or '..')".to_string());
+                        tokens.push(Token::Dot);
                     }
                 }
                 '\'' => {
@@ -262,8 +279,13 @@ impl Lexer {
                         "else" => tokens.push(Token::Else),
                         "for" => tokens.push(Token::For),
                         "in" => tokens.push(Token::In),
+                        "while" => tokens.push(Token::While),
                         "break" => tokens.push(Token::Break),
                         "continue" => tokens.push(Token::Continue),
+                        "fn" => tokens.push(Token::Fn),
+                        "class" => tokens.push(Token::Class),
+                        "return" => tokens.push(Token::Return),
+                        "self" => tokens.push(Token::SelfKw),
                         _ => tokens.push(Token::Ident(ident)),
                     }
                 }

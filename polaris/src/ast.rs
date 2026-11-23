@@ -1,22 +1,39 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrimType {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeRef {
     Int,
     Uint,
     Float,
     Char,
     String,
     Bool,
+    Void,
+    Custom(String),
+}
+
+impl TypeRef {
+    pub fn display_name(&self) -> String {
+        match self {
+            TypeRef::Int => "int".to_string(),
+            TypeRef::Uint => "uint".to_string(),
+            TypeRef::Float => "float".to_string(),
+            TypeRef::Char => "char".to_string(),
+            TypeRef::String => "string".to_string(),
+            TypeRef::Bool => "bool".to_string(),
+            TypeRef::Void => "void".to_string(),
+            TypeRef::Custom(name) => name.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeSpec {
-    Scalar(PrimType),
+    Scalar(TypeRef),
     Array1D {
-        elem: PrimType,
-        len: Option<Expr>, // None => [] / [...], Some(N) => [N] / [...N]
+        elem: TypeRef,
+        len: Option<Expr>,
     },
     Table {
-        row_types: Vec<PrimType>,
+        row_types: Vec<TypeRef>,
         len: Option<Expr>,
     },
 }
@@ -29,6 +46,20 @@ pub enum Expr {
     Str(String),
     Bool(bool),
     Ident(String),
+    SelfRef,
+    Call {
+        callee: String,
+        args: Vec<Expr>,
+    },
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
+    },
+    MethodCall {
+        target: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
     Index {
         target: Box<Expr>,
         index: Box<Expr>,
@@ -74,101 +105,60 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PatternElem {
-    Var(String),
-    Lit(Expr),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExtractMode {
-    Continuous,
-    Any,
-    Head,
-    Tail,
-    Single,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Extraction {
-    pub patterns: Vec<Vec<PatternElem>>, // 1D: len=1, 2D: len=rows
-    pub target: String,
-    pub mode: ExtractMode,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum WhileCond {
-    Extract(Extraction),
-    OrIn,
-    AndIn,
-    BoolExpr(Expr),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RewriteRule {
-    pub lhs: Vec<Vec<PatternElem>>,
-    pub guard: Option<Expr>,
-    pub rhs: Vec<Vec<Expr>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AssignValue {
-    Scalar(Expr),
-    Slice {
-        source: String,
-        row: Option<usize>,
-        len: Option<Expr>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputMode {
-    Token,
-    Line,
-    Char,
-    All,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum InputTarget {
     Decl {
         names: Vec<String>,
         ty: TypeSpec,
     },
-    Slice {
-        target: String,
-        row: Option<usize>,
-        len: Option<Expr>,
+    Var {
+        target: Expr,
     },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutputTarget {
-    pub target: String,
-    pub row: Option<usize>,
-    pub len: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignTarget {
     Ident(String),
+    Field {
+        target: Expr,
+        field: String,
+    },
     Index {
-        target: String,
-        row: Option<Expr>,
+        target: Expr,
         index: Expr,
     },
     Slice {
-        target: String,
-        row: Option<usize>,
+        target: Expr,
         start: Option<Expr>,
         end: Option<Expr>,
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoopCtrl {
-    None,
-    Break,
-    Continue,
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Option<TypeSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeSpec>,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDecl {
+    pub name: String,
+    pub ty: Option<TypeSpec>,
+    pub default_expr: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDecl {
+    pub name: String,
+    pub fields: Vec<FieldDecl>,
+    pub methods: Vec<FnDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,7 +167,6 @@ pub enum Stmt {
         names: Vec<String>,
         ty: TypeSpec,
         init: Option<Expr>,
-        input_mode: Option<InputMode>,
     },
     Assign {
         target: AssignTarget,
@@ -194,36 +183,25 @@ pub enum Stmt {
     },
     For {
         var_name: String,
-        var_ty: Option<PrimType>,
+        var_ty: Option<TypeRef>,
         range_start: Expr,
         range_end: Expr,
         body: Vec<Stmt>,
     },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
+    Return(Option<Expr>),
+    ExprStmt(Expr),
     Print {
         args: Vec<Expr>,
-    },
-    SliceAssign {
-        target: String,
-        row: Option<usize>,
-        len: Option<Expr>,
-        value: AssignValue,
-    },
-    Output {
-        target: String,
-        row: Option<usize>,
-        len: Option<Expr>,
     },
     FnInput {
         targets: Vec<InputTarget>,
     },
-    FnOutput {
-        targets: Vec<OutputTarget>,
-    },
-    While {
-        cond: WhileCond,
-        step: Vec<Extraction>,
-        body: Vec<RewriteRule>,
-    },
+    FnDecl(FnDecl),
+    ClassDecl(ClassDecl),
 }

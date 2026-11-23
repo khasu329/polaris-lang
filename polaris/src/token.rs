@@ -20,16 +20,17 @@ pub enum Token {
     Star,    // *
     Slash,   // /
     Percent, // %
-    And,     // &
-    Or,      // |
+    And,     // & / &&
+    Or,      // | / ||
     Not,     // !
 
     // Punctuation
     Colon,     // :
     Semicolon, // ;
     Comma,     // ,
-    Ellipsis,  // ...
+    Dot,       // .
     DotDot,    // ..
+    Arrow,     // ->
     LParen,    // (
     RParen,    // )
     LBracket,  // [
@@ -42,8 +43,13 @@ pub enum Token {
     Else,
     For,
     In,
+    While,
     Break,
     Continue,
+    Fn,
+    Class,
+    Return,
+    SelfKw,
 
     Eof,
 }
