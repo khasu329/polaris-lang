@@ -58,7 +58,8 @@ impl Diagnostic {
 
         if self.span.line > 0 {
             let line_idx = self.span.line - 1;
-            if let Some(src_line) = source.lines().nth(line_idx) {
+            if let Some(raw_line) = source.split('\n').nth(line_idx) {
+                let src_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
                 let line_num = self.span.line.to_string();
                 let gutter = " ".repeat(line_num.len());
                 let caret_offset = self.span.col.saturating_sub(1);
